@@ -4,6 +4,9 @@ from dataclasses import dataclass
 import re
 import ipaddress
 from urllib.parse import urlparse
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
+
 
 @dataclass
 class UserInput:
@@ -30,13 +33,18 @@ class GoalIntake:
                 r"(?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"  # Sub domain + hostname
                 r"[a-zA-Z]{2,}$"         # Top-level domain
             )
+        self.executor = ThreadPoolExecutor(max_workers=2)
 
     def get_goal(self):
         # Prompt the user for their goal
 
         command = input(self.prompt_message).strip()
-        goal_type = self.determine_goal_type(command)
-        target = self.extract_target(command)
+        # Run goal type determination and target extraction concurrently
+        future_goal = self.executor.submit(self.determine_goal_type_cached, command)
+        future_target = self.executor.submit(self.extract_target, command)
+
+        goal_type = future_goal.result()
+        target = future_target.result()
         timestamp = time.time()
         
         user_input = UserInput(
@@ -48,6 +56,11 @@ class GoalIntake:
         
         
         return user_input
+
+    @lru_cache(maxsize=256)
+    def determine_goal_type_cached(self, command: str):
+        return self.determine_goal_type(command)
+
 
     def determine_goal_type(self, command:str):
         # Uses an LLM to classify the command into goal types"
@@ -118,7 +131,7 @@ class GoalIntake:
     def validate_user_target(self, target:str):
         # takes discovered targets and validates that they are in fact valid targets (domain, URL, IP)
         text = target.strip()
-        import ipdb; ipdb.set_trace()
+        
         # check for IP address
         try:
             ipaddress.ip_address(text)
